@@ -93,7 +93,7 @@ def download(url, downloads):
         seen.add(url)
         try:
             response = fetch(url)
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError):
             continue
         with response:
             prefix = response.read(8)

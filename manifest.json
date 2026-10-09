@@ -1,17 +1,17 @@
 {
   "id": "GameCopyWorld",
   "name": "GameCopyWorld",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "api_version": 1,
   "type": "generic",
   "enabled": true,
-  "minimum_playlite_version": "0.2.61",
+  "minimum_playlite_version": "0.2.74",
   "description": "Find game fixes on GameCopyWorld and install reviewed archive files with verified restoration.",
   "plugin_dependencies": [
     {
       "id": "CrackTools",
       "repository": "swolfgang-dev/playlite-plugin-crack-tools",
-      "minimum_version": "0.1.0"
+      "minimum_version": "0.2.1"
     }
   ]
 }

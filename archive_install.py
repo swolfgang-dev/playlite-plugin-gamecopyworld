@@ -1,6 +1,5 @@
 """Reviewed archive overlays using the shared verified backup manifest."""
 import fcntl
-import os
 from pathlib import Path, PurePosixPath
 import shutil
 import stat

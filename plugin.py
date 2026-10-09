@@ -19,6 +19,7 @@ class Wizard(QWizard):
         self.setWindowTitle('Install from GameCopyWorld')
         self.resize(1000, 650)
         self.setButtonText(QWizard.WizardButton.FinishButton, 'Install selected files')
+        self.button(QWizard.WizardButton.FinishButton).setProperty('primary',True)
         source = QWizardPage()
         source.setTitle('Find and download a file')
         layout = QVBoxLayout(source)
@@ -95,7 +96,17 @@ class Wizard(QWizard):
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
         preview.isComplete = lambda: any(self.tree.topLevelItem(i).checkState(0) == Qt.CheckState.Checked for i in range(self.tree.topLevelItemCount()))
-        self.tree.itemChanged.connect(lambda: preview.completeChanged.emit())
+        self.review_summary = QLabel()
+        self.review_summary.setWordWrap(True)
+        layout.addWidget(self.review_summary)
+        def summarize():
+            selected = [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())
+                        if self.tree.topLevelItem(i).checkState(0) == Qt.CheckState.Checked]
+            replaced = sum(item.text(2).lower().startswith(('replace', 'overwrite')) for item in selected)
+            self.review_summary.setText(f'{len(selected)} files selected · {replaced} existing files to replace · Backups kept in the game folder')
+            preview.completeChanged.emit()
+        self.update_review_summary = summarize
+        self.tree.itemChanged.connect(summarize)
         self.addPage(preview)
 
     def search(self):
@@ -202,6 +213,7 @@ class Wizard(QWizard):
             self.tree.addTopLevelItem(item)
         self.tree.resizeColumnToContents(0)
         self.tree.resizeColumnToContents(1)
+        self.update_review_summary()
 
     def accept(self):
         mappings = [self.tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole)

@@ -24,6 +24,17 @@ class Tests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as root,patch.object(web,'fetch',return_value=io.BytesIO(b'<html>Browser required</html>')):
    with self.assertRaisesRegex(ValueError,'browser'):web.download('https://dl.gamecopyworld.eu/',root)
    self.assertFalse(list(Path(root).iterdir()))
+ def test_cancellation_removes_partial_archive(self):
+  cancelled=[]
+  class Response(io.BytesIO):
+   def read(self, size=-1):
+    result=super().read(size)
+    if size>8:cancelled.append(True)
+    return result
+  with tempfile.TemporaryDirectory() as root,patch.object(web,'fetch',return_value=Response(b'PK123456payload')):
+   with self.assertRaisesRegex(ValueError,'cancelled'):
+    web.download('https://dl.gamecopyworld.eu/',root,cancel=lambda:bool(cancelled))
+   self.assertFalse(list(Path(root).iterdir()))
  def test_external_links_not_automatically_fetched(self):
   self.assertFalse(web.allowed('https://gamecopyworld.eu.evil.example/file.zip'))
   self.assertFalse(web.allowed('file:///tmp/archive.zip'))

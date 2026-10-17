@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QWizard, QWizardPage, QVBoxLayout, QLabel, QPushButt
 from playlite.providers import GenericPlugin
 from playlite.lifecycle import run_dialog, choose_file, show_warning
 from urllib.parse import urlencode
+import threading
 
 
 class ArchiveProgressMixin:
@@ -16,6 +17,13 @@ class Wizard(QWizard):
         super().__init__(window)
         self.plugin, self.window, self.game = plugin, window, dict(game)
         self.rows = []
+        self.tasks = set()
+        self.lookup_generation = 0
+        self.patch_generation = 0
+        self.archive_generation = 0
+        self.closed = False
+        self.cancel_downloads = threading.Event()
+        self.finished.connect(self.finish_work)
         self.setWindowTitle('Install from GameCopyWorld')
         self.resize(1000, 650)
         self.setButtonText(QWizard.WizardButton.FinishButton, 'Install selected files')
@@ -112,68 +120,100 @@ class Wizard(QWizard):
     def search(self):
         QDesktopServices.openUrl(QUrl('https://gamecopyworld.eu/games/search_results.shtml?' + urlencode({'q': self.game['Name']})))
 
-    def background(self, work, complete, failed=None):
-        from playlite.metadata_dialog import Task
+    def finish_work(self, *_):
+        self.closed = True
+        self.cancel_downloads.set()
+
+    def background(self, work, complete, failed=None, *, current=lambda: True):
+        from playlite.tasks import Task
         task = Task(work)
-        if not hasattr(self, 'tasks'): self.tasks = []
-        self.tasks.append(task)
-        task.signals.succeeded.connect(complete)
-        task.signals.failed.connect(failed or (lambda error: self.message.setText(str(error) + ' You can use the browser and file picker instead.')))
+        self.tasks.add(task)
+        def success(value):
+            self.tasks.discard(task)
+            if not self.closed and current():
+                complete(value)
+        def failure(error):
+            self.tasks.discard(task)
+            if self.closed or not current():
+                return
+            if failed:
+                failed(error)
+            else:
+                self.message.setText(str(error) + ' You can use the browser and file picker instead.')
+        task.bind(self, success, failure)
         QThreadPool.globalInstance().start(task)
 
     def lookup(self):
         from .web_catalogue import search
+        self.lookup_generation += 1
+        self.patch_generation += 1
+        generation = self.lookup_generation
         self.results.clear(); self.patch_list.clear()
         self.message.setText('Searching GameCopyWorld’s game index…')
         def complete(rows):
+            if generation != self.lookup_generation:
+                return
             from PyQt6.QtWidgets import QListWidgetItem
             for row in rows:
                 item = QListWidgetItem(row['title']); item.setData(Qt.ItemDataRole.UserRole, row['url']); self.results.addItem(item)
             self.message.setText('Select a game and show its downloads.' if rows else 'No matching games found. Try the browser search.')
             if rows: self.results.setCurrentRow(0)
-        self.background(lambda: search(self.game['Name']), complete)
+        self.background(lambda: search(self.game['Name']), complete, current=lambda: generation == self.lookup_generation)
 
     def select_game(self, item):
         if item is None: return
         from .web_catalogue import patches
+        self.patch_generation += 1
+        generation = self.patch_generation
         url = item.data(Qt.ItemDataRole.UserRole)
         self.patch_list.clear(); self.message.setText('Loading available downloads…')
         def complete(rows):
+            if generation != self.patch_generation:
+                return
             from PyQt6.QtWidgets import QListWidgetItem
             for row in rows:
                 entry = QListWidgetItem(row['title']); entry.setData(Qt.ItemDataRole.UserRole, row['url']); self.patch_list.addItem(entry)
             self.message.setText('Choose a file matching your game version. Only fixed-file downloads are listed.' if rows else 'No downloads could be read. Use the browser instead.')
             if rows: self.patch_list.setCurrentRow(0)
-        self.background(lambda: patches(url), complete)
+        self.background(lambda: patches(url), complete, current=lambda: generation == self.patch_generation)
 
     def download_patch(self, item):
         if item is None: return
         from .web_catalogue import download
+        self.archive_generation += 1
+        generation = self.archive_generation
         url = item.data(Qt.ItemDataRole.UserRole)
         folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation) or str(Path.home() / 'Downloads')
         self.message.setText('Downloading selected archive…')
         def failed(error):
+            if generation != self.archive_generation:
+                return
             self.message.setText(str(error) + ' Opening the selected download in your browser; select the archive when finished.')
             QDesktopServices.openUrl(QUrl(url))
-        self.background(lambda: download(url, folder), self.analyze_file, failed)
+        def complete(path):
+            if generation == self.archive_generation:
+                self.analyze_file(path)
+        self.background(lambda: download(url, folder, cancel=self.cancel_downloads.is_set), complete, failed)
 
     def choose(self):
         downloads = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation) or str(Path.home() / 'Downloads')
-        archive = choose_file(self, 'Choose downloaded archive', downloads, 'Archives (*.zip *.rar *.7z);;All files (*)')
+        archive, _ = choose_file(self, 'Choose downloaded archive', downloads, 'Archives (*.zip *.rar *.7z);;All files (*)')
         if not archive:
             return
         self.analyze_file(archive)
 
     def analyze_file(self, archive):
+        self.archive_generation += 1
+        generation = self.archive_generation
         self.rows = []
         self.source_page.completeChanged.emit()
         self.archive.setText(archive)
         self.pick.setEnabled(False)
         self.message.setText('Analyzing archive…')
         from .archive_install import analyze
-        from playlite.metadata_dialog import Task
-        self.task = Task(lambda: analyze(archive))
         def complete(rows):
+            if generation != self.archive_generation:
+                return
             self.rows = rows
             self.pick.setEnabled(True)
             self.message.setText(str(len(rows)) + ' files found. Continue to review the installation paths.')
@@ -192,11 +232,11 @@ class Wizard(QWizard):
             self.preview()
             self.source_page.completeChanged.emit()
         def failed(error):
+            if generation != self.archive_generation:
+                return
             self.pick.setEnabled(True)
             self.message.setText(str(error))
-        self.task.signals.succeeded.connect(complete)
-        self.task.signals.failed.connect(failed)
-        QThreadPool.globalInstance().start(self.task)
+        self.background(lambda: analyze(archive), complete, failed)
 
     def preview(self):
         self.tree.clear()

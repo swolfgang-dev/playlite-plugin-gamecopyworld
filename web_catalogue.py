@@ -81,12 +81,14 @@ def patches(url):
     return results
 
 
-def download(url, downloads):
+def download(url, downloads, cancel=lambda: False):
     """Download an archive or fail to a browser; never treat HTML as a file."""
     filename = parse_qs(urlparse(url).query).get('f', [''])[0].replace('!', '.')
     filename = re.sub(r'[\\/\x00-\x1f<>:"|?*]', '', filename).strip(' .')[:180]
     pending, seen = [url], set()
     for _ in range(12):
+        if cancel():
+            raise ValueError('Download cancelled.')
         if not pending: break
         url = pending.pop(0)
         if url in seen: continue
@@ -97,6 +99,8 @@ def download(url, downloads):
             continue
         with response:
             prefix = response.read(8)
+            if cancel():
+                raise ValueError('Download cancelled.')
             extension = '.zip' if prefix.startswith(b'PK') else '.7z' if prefix.startswith(b'7z\xbc\xaf\x27\x1c') else '.rar' if prefix.startswith(b'Rar!') else None
             if extension:
                 downloads = Path(downloads); downloads.mkdir(parents=True, exist_ok=True)
@@ -109,9 +113,13 @@ def download(url, downloads):
                     with partial.open('xb') as output:
                         output.write(prefix); size = len(prefix)
                         while chunk := response.read(1024 * 1024):
+                            if cancel():
+                                raise ValueError('Download cancelled.')
                             size += len(chunk)
                             if size > 2 * 1024**3: raise ValueError('Download exceeds 2 GiB.')
                             output.write(chunk)
+                    if cancel():
+                        raise ValueError('Download cancelled.')
                     partial.rename(target)
                 finally:
                     partial.unlink(missing_ok=True)

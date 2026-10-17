@@ -5,7 +5,7 @@
   "api_version": 1,
   "type": "generic",
   "enabled": true,
-  "minimum_playlite_version": "0.2.74",
+  "minimum_playlite_version": "0.2.88",
   "description": "Find game fixes on GameCopyWorld and install reviewed archive files with verified restoration.",
   "plugin_dependencies": [
     {
